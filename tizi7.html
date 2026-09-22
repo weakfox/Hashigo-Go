@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>单列快速围棋（梯子棋）</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft Yahei", Arial, sans-serif;
+        }
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 15px;
+            min-height: 100vh;
+        }
+        .rules {
+            max-width: 380px;
+            margin-bottom: 15px;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        .rules h3 {
+            text-align: center;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        .rules ul {
+            padding-left: 20px;
+        }
+        .board-container {
+            display: flex;
+            flex-direction: column;
+            border: 3px solid #333;
+            background: #ffffff;
+            margin: 10px 0;
+        }
+        .cell {
+            width: 48px;
+            height: 48px;
+            border: 1px solid #999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        .cell:hover {
+            background-color: #eee;
+        }
+        .black {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background-color: #111;
+        }
+        .white {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            background-color: #fff;
+            border: 2px solid #222;
+        }
+        #status {
+            margin: 12px 0;
+            font-size: 16px;
+            font-weight: bold;
+            text-align: center;
+            min-height: 22px;
+        }
+        #restart {
+            padding: 10px 22px;
+            font-size: 15px;
+            background: #333;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        #restart:hover {
+            background: #555;
+        }
+        .copyright {
+            margin-top: auto;
+            padding-top: 20px;
+            font-size: 13px;
+            color: #666;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="rules">
+        <h3>游戏规则</h3>
+        <ul>
+            <li>棋盘：10格竖排，白棋先手，轮流落子</li>
+            <li>落子：仅空白格可下，禁止自杀落子</li>
+            <li>吃子：棋子无气立即被提，吃子为合法落子</li>
+            <li>结束：棋盘满、无合法落子、局面重复</li>
+            <li>胜负：存活棋子多者胜，数量相同为平局</li>
+        </ul>
+    </div>
+
+    <div id="status">白棋先行</div>
+    <div class="board-container" id="board"></div>
+    <button id="restart">重新开始游戏</button>
+    <div class="copyright">本游戏由党豪杰设计制作</div>
+
+<script>
+const SIZE = 10;
+let board = [];
+let currentPlayer = 'white';
+let gameOver = false;
+let history = [];
+
+const boardEl = document.getElementById('board');
+const statusEl = document.getElementById('status');
+const restartBtn = document.getElementById('restart');
+
+// 初始化游戏
+function initGame() {
+    board = Array(SIZE).fill(null);
+    currentPlayer = 'white';
+    gameOver = false;
+    history = [];
+    generateSafeStart();
+    board = cleanAllDeadGroups(board);
+    saveHistory();
+    render();
+    updateStatus();
+}
+
+// 生成安全开局
+function generateSafeStart() {
+    let valid = false;
+    while (!valid) {
+        board.fill(null);
+        const pos = [];
+        while (pos.length < 3) {
+            const r = Math.floor(Math.random() * SIZE);
+            if (!pos.includes(r)) pos.push(r);
+        }
+        board[pos[0]] = 'black';
+        board[pos[1]] = 'black';
+        board[pos[2]] = 'white';
+        valid = checkAllAlive(board);
+    }
+}
+
+// 渲染棋盘
+function render() {
+    boardEl.innerHTML = '';
+    board.forEach((val, idx) => {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        if (val === 'black') cell.innerHTML = '<div class="black"></div>';
+        if (val === 'white') cell.innerHTML = '<div class="white"></div>';
+        cell.onclick = () => {
+            if (gameOver || board[idx] !== null) return;
+            attemptMove(idx);
+        };
+        boardEl.appendChild(cell);
+    });
+}
+
+// 落子（核心修复）
+function attemptMove(idx) {
+    if (gameOver || board[idx] !== null) return;
+
+    // 模拟落子
+    const testBoard = [...board];
+    testBoard[idx] = currentPlayer;
+    const oppo = currentPlayer === 'white' ? 'black' : 'white';
+
+    // 先提对方棋子
+    let afterCapture = cleanDeadGroups(testBoard, oppo);
+    // 再检查自己是否无气（自杀禁止）
+    const isSuicide = !isGroupAlive(afterCapture, idx);
+    const hasCaptured = testBoard.join() !== afterCapture.join();
+
+    // 规则：自杀禁止，但吃子 / 送吃允许
+    if (isSuicide && !hasCaptured) return;
+
+    // 正式落子
+    board = afterCapture;
+    saveHistory();
+
+    // 循环检测
+    if (isRepeated()) {
+        statusEl.textContent = '局面重复，游戏强制结束';
+        gameOver = true;
+        judgeWinner();
+        render();
+        return;
+    }
+
+    // 切换玩家
+    currentPlayer = currentPlayer === 'white' ? 'black' : 'white';
+
+    // 终局检测
+    board = cleanAllDeadGroups(board);
+    checkGameEnd();
+    render();
+    updateStatus();
+}
+
+// 获取连通组
+function getGroup(b, pos) {
+    const color = b[pos];
+    const group = new Set();
+    const queue = [pos];
+    group.add(pos);
+    while (queue.length) {
+        const cur = queue.shift();
+        const up = cur - 1;
+        const down = cur + 1;
+        if (up >= 0 && b[up] === color && !group.has(up)) {
+            group.add(up); queue.push(up);
+        }
+        if (down < SIZE && b[down] === color && !group.has(down)) {
+            group.add(down); queue.push(down);
+        }
+    }
+    return Array.from(group);
+}
+
+// 是否有气
+function hasLiberty(b, group) {
+    for (const p of group) {
+        if (p - 1 >= 0 && b[p - 1] === null) return true;
+        if (p + 1 < SIZE && b[p + 1] === null) return true;
+    }
+    return false;
+}
+
+// 是否存活
+function isGroupAlive(b, pos) {
+    if (b[pos] === null) return true;
+    return hasLiberty(b, getGroup(b, pos));
+}
+
+// 清理死棋
+function cleanDeadGroups(b, color) {
+    const newBoard = [...b];
+    const visited = Array(SIZE).fill(false);
+    for (let i = 0; i < SIZE; i++) {
+        if (newBoard[i] === color && !visited[i]) {
+            const group = getGroup(newBoard, i);
+            group.forEach(p => visited[p] = true);
+            if (!hasLiberty(newBoard, group)) group.forEach(p => newBoard[p] = null);
+        }
+    }
+    return newBoard;
+}
+
+// 清理全部死棋
+function cleanAllDeadGroups(b) {
+    return cleanDeadGroups(cleanDeadGroups(b, 'black'), 'white');
+}
+
+// 检查所有棋子存活
+function checkAllAlive(b) {
+    for (let i = 0; i < SIZE; i++) {
+        if (b[i] && !isGroupAlive(b, i)) return false;
+    }
+    return true;
+}
+
+// 游戏结束检测
+function checkGameEnd() {
+    board = cleanAllDeadGroups(board);
+    if (!board.includes(null)) {
+        gameOver = true; judgeWinner(); return;
+    }
+    let canMove = false;
+    for (let i = 0; i < SIZE; i++) {
+        if (board[i] === null && testValidMove(i)) {
+            canMove = true; break;
+        }
+    }
+    if (!canMove) {
+        statusEl.textContent = `${currentPlayer==='white'?'白棋':'黑棋'}无合法落子`;
+        gameOver = true; judgeWinner();
+    }
+}
+
+// 检测是否可落子（仅用于终局判断）
+function testValidMove(idx) {
+    const testBoard = [...board];
+    testBoard[idx] = currentPlayer;
+    const oppo = currentPlayer === 'white' ? 'black' : 'white';
+    const afterCapture = cleanDeadGroups(testBoard, oppo);
+    const selfAlive = isGroupAlive(afterCapture, idx);
+    const captured = testBoard.join() !== afterCapture.join();
+    return !gameOver && (selfAlive || captured);
+}
+
+// 胜负判定
+function judgeWinner() {
+    board = cleanAllDeadGroups(board);
+    const black = board.filter(c => c === 'black').length;
+    const white = board.filter(c => c === 'white').length;
+    let text = `黑棋：${black} 子 | 白棋：${white} 子 → `;
+    if (white > black) text += '白棋获胜';
+    else if (black > white) text += '黑棋获胜';
+    else text += '平局';
+    statusEl.textContent = text;
+}
+
+// 历史记录
+function saveHistory() {
+    history.push(board.join(','));
+    if (history.length > 15) history.shift();
+}
+
+// 重复局面
+function isRepeated() {
+    const c = board.join(',');
+    return history.filter(h => h === c).length >= 2;
+}
+
+// 状态
+function updateStatus() {
+    if (!gameOver) statusEl.textContent = currentPlayer === 'white' ? '轮到白棋落子' : '轮到黑棋落子';
+}
+
+restartBtn.onclick = initGame;
+initGame();
+</script>
+</body>
+</html>
